@@ -70,16 +70,35 @@ void handleerrno(JNIEnv *env)
    const char* msg = strerror(err);
    throw(env, err, msg);
 }
-   
-/*
- * Class:     cx_ath_matthew_unix_UnixServerSocket
- * Method:    native_bind
- * Signature: (Ljava/lang/String;)I
- */
-JNIEXPORT jint JNICALL Java_cx_ath_matthew_unix_UnixServerSocket_native_1bind
-  (JNIEnv *env, jobject o, jstring address, jboolean abstract)
+
+static int do_bind(JNIEnv *env, jstring address, jboolean abstract, int is_tcp)
 {
-   int sock = socket(PF_UNIX, SOCK_STREAM, 0);
+   int sock = socket(PF_UNIX, is_tcp ? SOCK_STREAM : SOCK_DGRAM, 0);
+   if (-1 == sock) { handleerrno(env); return -1; }
+   const char* caddr = (*env)->GetStringUTFChars(env, address, 0);
+   int slen = (*env)->GetStringUTFLength(env, address)+1;
+   struct sockaddr_un *sad = malloc(sizeof(sa_family_t)+slen);
+   if (abstract) {
+      char* shifted = sad->sun_path+1;
+      strncpy(shifted, caddr, slen-1);
+      sad->sun_path[0] = 0;
+   } else
+      strncpy(sad->sun_path, caddr, slen);
+   (*env)->ReleaseStringUTFChars(env, address, caddr);
+   sad->sun_family = AF_UNIX;
+   int rv = bind(sock, (const  struct  sockaddr*) sad, sizeof(sa_family_t)+slen);
+   free(sad);
+   if (-1 == rv) { handleerrno(env); return -1; }
+   if (is_tcp) {
+      rv = listen(sock, 10);
+      if (-1 == rv) { handleerrno(env); return -1; }
+   }
+   return sock;
+}
+
+static int do_connect(JNIEnv *env, int sock, jstring address, jboolean abstract, int is_tcp)
+{
+   if (sock <= 0) { sock = socket(PF_UNIX, is_tcp ? SOCK_STREAM : SOCK_DGRAM, 0); }
    if (-1 == sock) { handleerrno(env); return -1; }
    const char* caddr = (*env)->GetStringUTFChars(env, address, 0);
    int slen = (*env)->GetStringUTFLength(env, address)+1;
@@ -92,20 +111,54 @@ JNIEXPORT jint JNICALL Java_cx_ath_matthew_unix_UnixServerSocket_native_1bind
       strncpy(sad->sun_path, caddr, slen);
    (*env)->ReleaseStringUTFChars(env, address, caddr);
    sad->sun_family = AF_UNIX;
-   int rv = bind(sock, (const  struct  sockaddr*) sad, sizeof(sa_family_t)+slen);
+   int rv = connect(sock, (const struct sockaddr*) sad, sizeof(sa_family_t)+slen);
    free(sad);
-   if (-1 == rv) { handleerrno(env); return -1; }
-   rv = listen(sock, 10);
    if (-1 == rv) { handleerrno(env); return -1; }
    return sock;
 }
 
+static int do_recv(JNIEnv *env, jint sock, jbyteArray buf, jint offs, jint len, jint flags, jint timeout)
+{
+   fd_set rfds;
+   struct timeval tv;
+   jbyte* cbuf = (*env)->GetByteArrayElements(env, buf, NULL);
+   void* recvb = cbuf + offs;
+   int rv;
+
+   if (timeout > 0) {
+      FD_ZERO(&rfds);
+      FD_SET(sock, &rfds);
+      tv.tv_sec = 0;
+      tv.tv_usec = timeout;
+      rv = select(sock+1, &rfds, NULL, NULL, &tv);
+      rv = recv(sock, recvb, len, flags);
+      (*env)->ReleaseByteArrayElements(env, buf, cbuf, 0);
+      if (-1 == rv) { handleerrno(env); rv = -1; }
+      return rv;
+   } else  {
+      rv = recv(sock, recvb, len, flags);
+      (*env)->ReleaseByteArrayElements(env, buf, cbuf, 0);
+      if (-1 == rv) { handleerrno(env); return -1; }
+      return rv;
+   }
+}
+
+static int do_send(JNIEnv *env, jint sock, jbyteArray buf, jint offs, jint len)
+{
+   jbyte* cbuf = (*env)->GetByteArrayElements(env, buf, NULL);
+   void* sendb = cbuf + offs;
+   int rv = send(sock, sendb, len, 0);
+   (*env)->ReleaseByteArrayElements(env, buf, cbuf, 0);
+   if (-1 == rv) { handleerrno(env); return -1; }
+   return rv;
+}
+
 /*
- * Class:     cx_ath_matthew_unix_UnixServerSocket
+ * Class:     cx_ath_matthew_unix_BaseUnixSocket
  * Method:    native_close
  * Signature: (I)V
  */
-JNIEXPORT void JNICALL Java_cx_ath_matthew_unix_UnixServerSocket_native_1close
+JNIEXPORT void JNICALL Java_cx_ath_matthew_unix_BaseUnixSocket_native_1close
   (JNIEnv * env, jobject o, jint sock)
 {
    if (0 == sock) return;
@@ -115,6 +168,28 @@ JNIEXPORT void JNICALL Java_cx_ath_matthew_unix_UnixServerSocket_native_1close
       rv = close(sock);
       if (-1 == rv) { handleerrno(env); }
    }
+}
+
+/*
+ * Class:     cx_ath_matthew_unix_UnixServerSocket
+ * Method:    native_bind
+ * Signature: (Ljava/lang/String;)I
+ */
+JNIEXPORT jint JNICALL Java_cx_ath_matthew_unix_UnixServerSocket_native_1bind
+  (JNIEnv *env, jobject o, jstring address, jboolean abstract)
+{
+   return do_bind(env, address, abstract, 1);
+}
+
+/*
+ * Class:     cx_ath_matthew_unix_UnixUdpSocket
+ * Method:    native_bind
+ * Signature: (Ljava/lang/String;)I
+ */
+JNIEXPORT jint JNICALL Java_cx_ath_matthew_unix_UnixUdpSocket_native_1bind
+  (JNIEnv *env, jobject o, jstring address, jboolean abstract)
+{
+   return do_bind(env, address, abstract, 0);
 }
 
 /*
@@ -153,40 +228,40 @@ JNIEXPORT void JNICALL Java_cx_ath_matthew_unix_UnixSocket_native_1set_1pass_1cr
 JNIEXPORT jint JNICALL Java_cx_ath_matthew_unix_UnixSocket_native_1connect
   (JNIEnv *env, jobject o, jstring address, jboolean abstract)
 {
-   int sock = socket(PF_UNIX, SOCK_STREAM, 0);
-   if (-1 == sock) { handleerrno(env); return -1; }
-   const char* caddr = (*env)->GetStringUTFChars(env, address, 0);
-   int slen = (*env)->GetStringUTFLength(env, address)+1;
-   struct sockaddr_un *sad = malloc(sizeof(sa_family_t)+slen);
-   if (abstract)  {
-      char* shifted = sad->sun_path+1;
-      strncpy(shifted, caddr, slen-1);
-      sad->sun_path[0] = 0;
-   } else
-      strncpy(sad->sun_path, caddr, slen);
-   (*env)->ReleaseStringUTFChars(env, address, caddr);
-   sad->sun_family = AF_UNIX;
-   int rv = connect(sock, (const struct sockaddr*) sad, sizeof(sa_family_t)+slen);
-   free(sad);
-   if (-1 == rv) { handleerrno(env); return -1; }
-   return sock;
+   return do_connect(env, -1, address, abstract, 1);
 }
 
 /*
- * Class:     cx_ath_matthew_unix_UnixSocket
- * Method:    native_close
- * Signature: (I)V
+ * Class:     cx_ath_matthew_unix_UnixUdpSocket
+ * Method:    native_connect
+ * Signature: (Ljava/lang/String;)I
  */
-JNIEXPORT void JNICALL Java_cx_ath_matthew_unix_UnixSocket_native_1close
-  (JNIEnv *env, jobject o, jint sock)
+JNIEXPORT jint JNICALL Java_cx_ath_matthew_unix_UnixUdpSocket_native_1connect
+  (JNIEnv *env, jobject o, jint sock, jstring address, jboolean abstract)
 {
-   if (0 == sock) return;
-   int rv = shutdown(sock, SHUT_RDWR);
-   if (-1 == rv) { handleerrno(env); }
-   else {
-      rv = close(sock);
-      if (-1 == rv) { handleerrno(env); }
-   }
+   return do_connect(env, sock, address, abstract, 1);
+}
+
+/*
+ * Class:     cx_ath_matthew_unix_UnixUdpSocket
+ * Method:    native_recv
+ * Signature: ([BII)I
+ */
+JNIEXPORT jint JNICALL Java_cx_ath_matthew_unix_UnixUdpSocket_native_1recv
+  (JNIEnv *env, jobject o, jint sock, jbyteArray buf, jint offs, jint len)
+{
+   return do_recv(env, sock, buf, offs, len, 0, 0);
+}
+
+/*
+ * Class:     cx_ath_matthew_unix_UnixUdpSocket
+ * Method:    native_send
+ * Signature: ([BII)I
+ */
+JNIEXPORT jint JNICALL Java_cx_ath_matthew_unix_UnixUdpSocket_native_1send
+  (JNIEnv *env, jobject o, jint sock, jbyteArray buf, jint offs, jint len)
+{
+   return do_send(env, sock, buf, offs, len);
 }
 
 /*
@@ -197,28 +272,7 @@ JNIEXPORT void JNICALL Java_cx_ath_matthew_unix_UnixSocket_native_1close
 JNIEXPORT jint JNICALL Java_cx_ath_matthew_unix_USInputStream_native_1recv
   (JNIEnv *env, jobject o, jint sock, jbyteArray buf, jint offs, jint len, jint flags, jint timeout)
 {
-   fd_set rfds;
-   struct timeval tv;
-   jbyte* cbuf = (*env)->GetByteArrayElements(env, buf, NULL);
-   void* recvb = cbuf + offs;
-   int rv;
-
-   if (timeout > 0) {
-      FD_ZERO(&rfds);
-      FD_SET(sock, &rfds);
-      tv.tv_sec = 0;
-      tv.tv_usec = timeout;
-      rv = select(sock+1, &rfds, NULL, NULL, &tv);
-      rv = recv(sock, recvb, len, flags);
-      if (-1 == rv) { handleerrno(env); rv = -1; }
-      (*env)->ReleaseByteArrayElements(env, buf, cbuf, 0);
-      return rv;
-   } else  {
-      rv = recv(sock, recvb, len, flags);
-      (*env)->ReleaseByteArrayElements(env, buf, cbuf, 0);
-      if (-1 == rv) { handleerrno(env); return -1; }
-      return rv;
-   }
+   return do_recv(env, sock, buf, offs, len, flags, timeout);
 }
 
 /*
@@ -229,12 +283,7 @@ JNIEXPORT jint JNICALL Java_cx_ath_matthew_unix_USInputStream_native_1recv
 JNIEXPORT jint JNICALL Java_cx_ath_matthew_unix_USOutputStream_native_1send__I_3BII
   (JNIEnv *env, jobject o, jint sock, jbyteArray buf, jint offs, jint len)
 {
-   jbyte* cbuf = (*env)->GetByteArrayElements(env, buf, NULL);
-   void* sendb = cbuf + offs;
-   int rv = send(sock, sendb, len, 0);
-   (*env)->ReleaseByteArrayElements(env, buf, cbuf, 0);
-   if (-1 == rv) { handleerrno(env); return -1; }
-   return rv;
+   return do_send(env, sock, buf, offs, len);
 }
 
 /*

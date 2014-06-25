@@ -1,3 +1,8 @@
+Version 0.9:
+
+	* Add support for datagram Unix Sockets, use UnixUdpSocket class.
+	  patch by Tomer <tomer -dot- tf -at- gmail -dot- com>
+
 Version 0.8:
 
 	* Change to expat licence 

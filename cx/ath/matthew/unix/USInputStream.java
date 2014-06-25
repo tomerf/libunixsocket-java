@@ -63,7 +63,7 @@ public class USInputStream extends InputStream
       if (closed) throw new NotConnectedException();
       int count = native_recv(sock, b, off, len, flags, timeout);
       /* Yes, I really want to do this. Recv returns 0 for 'connection shut down'.
-       * read() returns -1 for 'end of stream.
+       * read() returns -1 for 'end of stream'.
        * Recv returns -1 for 'EAGAIN' (all other errors cause an exception to be raised)
        * whereas read() returns 0 for '0 bytes read', so yes, I really want to swap them here.
        */

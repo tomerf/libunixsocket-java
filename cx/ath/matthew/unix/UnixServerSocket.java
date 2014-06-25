@@ -31,16 +31,12 @@ import java.io.IOException;
 /**
  * Represents a listening UNIX Socket.
  */
-public class UnixServerSocket
+public class UnixServerSocket extends BaseUnixSocket
 {
    static { System.loadLibrary("unix-java"); }
    private native int native_bind(String address, boolean abs) throws IOException;
-   private native void native_close(int sock) throws IOException;
    private native int native_accept(int sock) throws IOException;
-   private UnixSocketAddress address = null;
    private boolean bound = false;
-   private boolean closed = false;
-   private int sock;
    /**
     * Create an un-bound server socket.
     */
@@ -73,16 +69,6 @@ public class UnixServerSocket
       return new UnixSocket(client_sock, address);
    }
    /**
-    * Closes the ServerSocket.
-    */
-   public synchronized void close() throws IOException
-   {
-      native_close(sock);
-      sock = 0;
-      closed = true;
-      bound = false;
-   }
-   /**
     * Binds a server socket to the given address.
     * @param address Path to the socket.
     */
@@ -101,22 +87,6 @@ public class UnixServerSocket
    public void bind(String address) throws IOException
    {
       bind(new UnixSocketAddress(address));
-   }   
-   /**
-    * Return the address this socket is bound to.
-    * @return The UnixSocketAddress if bound or null if unbound.
-    */
-   public UnixSocketAddress getAddress()
-   {
-      return address;
-   }
-   /**
-    * Check the status of the socket.
-    * @return True if closed.
-    */
-   public boolean isClosed()
-   {
-      return closed;
    }
    /**
     * Check the status of the socket.

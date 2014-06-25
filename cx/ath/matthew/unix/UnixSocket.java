@@ -35,25 +35,21 @@ import cx.ath.matthew.debug.Debug;
 /**
  * Represents a UnixSocket.
  */
-public class UnixSocket
+public class UnixSocket extends BaseUnixSocket
 {
    static { System.loadLibrary("unix-java"); }
    private native void native_set_pass_cred(int sock, boolean passcred) throws IOException;
    private native int native_connect(String address, boolean abs) throws IOException;
-   private native void native_close(int sock) throws IOException;
    private native int native_getPID(int sock);
    private native int native_getUID(int sock);
    private native int native_getGID(int sock);
    private native void native_send_creds(int sock, byte data) throws IOException;
    private native byte native_recv_creds(int sock, int[] creds) throws IOException;
 
-   private UnixSocketAddress address = null;
    private USOutputStream os = null;
    private USInputStream is = null;
-   private boolean closed = false;
    private boolean connected = false;
    private boolean passcred = false;
-   private int sock = 0;
    private boolean blocking = true;
    private int uid = -1;
    private int pid = -1;
@@ -145,15 +141,6 @@ public class UnixSocket
    public OutputStream getOutputStream()
    {
       return os;
-   }
-   /**
-    * Returns the address this socket is connected to.
-    * Returns null if the socket is unconnected.
-    * @return The UnixSocketAddress the socket is connected to
-    */
-   public UnixSocketAddress getAddress()
-   { 
-      return address;
    }
    /**
     * Send a single byte of data with credentials.
@@ -260,15 +247,6 @@ public class UnixSocket
    {
       blocking = enable;
       if (null != is) is.setBlocking(enable);
-   }
-
-   /**
-    * Check the socket status.
-    * @return true if closed.
-    */
-   public boolean isClosed()
-   {
-      return closed;
    }
    /**
     * Check the socket status.
